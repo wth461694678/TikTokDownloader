@@ -19,6 +19,8 @@ from src.module import Cookie
 from src.record import BaseLogger, LoggerManager
 from src.custom import PROJECT_ROOT
 
+import requests
+
 # 定义支持的操作类型
 SUPPORTED_ACTIONS = [
     'detail', 'account', 'comment', 'search', 'info', 
@@ -754,13 +756,13 @@ async def _handle_collection_action(tiktok_downloader, action, urls, result):
         result['message'] = f'处理{action}时出现错误: {str(e)}'
 
 
-def send_markdown_message(content: str):
-    """发送Markdown消息到bot（示例实现）"""
-    # TODO: 实现实际的bot发送逻辑
-    print("发送给Bot的消息:")
-    print("=" * 50)
-    print(content)
-    print("=" * 50)
+def send_markdown_message(content):
+    key = "c6b2ff61-ec4d-49bc-a41b-80fa935f7112"
+    headers = {'Content-Type': 'application/json'}
+    params = {'key': key}
+    data = {"msgtype": "markdown", "markdown": {"content": content}}
+    response = requests.post('https://qyapi.weixin.qq.com/cgi-bin/webhook/send', params=params, headers=headers, data=json.dumps(data))
+    return response
 
 
 def read_csv_first_rows(csv_path: str, rows: int = 5) -> str:
@@ -870,71 +872,37 @@ async def main():
             import glob
             import time
             
-            print("\n🔍 开始搜索CSV文件...")
+            print("\n🔍 搜索CSV文件...")
             print(f"当前工作目录: {os.getcwd()}")
             
             # 等待一小段时间确保文件写入完成
             time.sleep(1)
             
-            # 扩展搜索路径
+            # 根据实际文件位置，直接搜索 Volume/downloads/Data/ 目录
             search_patterns = [
-                # 项目相关目录
-                Path("./downloads") / "*.csv",
+                Path("./Volume/downloads/Data") / "*.csv",
                 Path("./downloads/Data") / "*.csv", 
                 Path("./downloads/Download") / "*.csv",
+                Path("./downloads") / "*.csv",
                 Path("./") / "*.csv",
-                Path("./output") / "*.csv",
-                Path("./Data") / "*.csv",
-                Path("./Download") / "*.csv",
-                # 可能的子目录
-                Path("./downloads") / "*" / "*.csv",
-                Path("./") / "*" / "*.csv",
             ]
             
             csv_file = None
-            all_found_files = []
             
             for pattern in search_patterns:
                 try:
-                    files = glob.glob(str(pattern), recursive=False)
-                    if pattern.name.count('*') > 1:  # 如果是递归模式
-                        files = glob.glob(str(pattern), recursive=True)
-                    
+                    files = glob.glob(str(pattern))
                     if files:
                         print(f"  ✅ 在 {pattern} 找到 {len(files)} 个文件: {files}")
-                        all_found_files.extend(files)
+                        # 选择最新的文件
+                        csv_file = max(files, key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0)
+                        print(f"  🎯 选择最新文件: {csv_file}")
+                        print(f"  📅 文件修改时间: {time.ctime(os.path.getmtime(csv_file))}")
+                        break
                     else:
                         print(f"  ❌ 在 {pattern} 未找到文件")
                 except Exception as e:
                     print(f"  ⚠️ 搜索 {pattern} 时出错: {e}")
-            
-            # 如果找到文件，选择最新的
-            if all_found_files:
-                # 去重并按修改时间排序
-                unique_files = list(set(all_found_files))
-                csv_file = max(unique_files, key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0)
-                print(f"  🎯 选择最新文件: {csv_file}")
-                print(f"  📅 文件修改时间: {time.ctime(os.path.getmtime(csv_file))}")
-            else:
-                print("  ❌ 在所有预定义路径中都未找到CSV文件")
-                
-                # 进行全局递归搜索
-                print("\n🔍 执行全局递归搜索...")
-                try:
-                    all_csv = glob.glob("**/*.csv", recursive=True)
-                    if all_csv:
-                        print(f"   找到的所有CSV文件：")
-                        for f in all_csv:
-                            stat = os.stat(f)
-                            print(f"   - {f} (大小: {stat.st_size} bytes, 修改时间: {time.ctime(stat.st_mtime)})")
-                        
-                        # 选择最新的CSV文件
-                        csv_file = max(all_csv, key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0)
-                        print(f"   🎯 选择最新的全局文件: {csv_file}")
-                    else:
-                        print("   未找到任何CSV文件")
-                except Exception as e:
-                    print(f"   全局搜索出错: {e}")
             
             # 尝试读取文件
             if csv_file and os.path.exists(csv_file):
@@ -946,19 +914,35 @@ async def main():
                 print(f"   - 绝对路径: {os.path.abspath(csv_file)}")
                 
                 try:
+                    print("\n� 开始读取CSV内容...")
                     csv_content = read_csv_first_rows(csv_file)
-                    send_markdown_message(csv_content)
-                    print("✅ CSV内容读取和发送成功")
+                    print(f"📝 读取的CSV内容长度: {len(csv_content)} 字符")
+                    print(f"📝 CSV内容预览: {csv_content[:200]}..." if len(csv_content) > 200 else f"📝 CSV内容: {csv_content}")
+                    
+                    print("\n🤖 调用send_markdown_message函数...")
+
+                    response = send_markdown_message(csv_content)
+                    print("✅ send_markdown_message 函数调用完成,响应:", response.text)
+                    
                 except Exception as e:
-                    print(f"❌ 读取CSV文件失败: {e}")
+                    print(f"❌ 读取或发送CSV文件失败: {e}")
+                    import traceback
+                    traceback.print_exc()
             else:
-                print("\n❌ 最终未找到可用的CSV文件")
-                print("🔍 调试信息:")
+                print("\n❌ 未找到CSV文件")
+                print("� 调试信息:")
                 print(f"   - 当前目录: {os.getcwd()}")
+                print(f"   - Volume目录存在: {os.path.exists('Volume')}")
+                if os.path.exists('Volume'):
+                    print(f"   - Volume目录内容: {os.listdir('Volume')}")
+                    if os.path.exists('Volume/downloads'):
+                        print(f"   - Volume/downloads目录内容: {os.listdir('Volume/downloads')}")
+                        if os.path.exists('Volume/downloads/Data'):
+                            print(f"   - Volume/downloads/Data目录内容: {os.listdir('Volume/downloads/Data')}")
                 print(f"   - downloads目录存在: {os.path.exists('downloads')}")
                 if os.path.exists('downloads'):
                     print(f"   - downloads目录内容: {os.listdir('downloads')}")
-                print(f"   - 当前目录内容: {[f for f in os.listdir('.') if f.endswith('.csv')]}")
+                print(f"   - 当前目录CSV文件: {[f for f in os.listdir('.') if f.endswith('.csv')]}")
         
         # 如果有错误，设置退出码
         if not result.get('success', False):
