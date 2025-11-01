@@ -867,29 +867,98 @@ async def main():
             # 查找生成的CSV文件
             import os
             from pathlib import Path
+            import glob
+            import time
             
-            # 优先在downloads目录查找CSV文件
-            csv_paths = [
+            print("\n🔍 开始搜索CSV文件...")
+            print(f"当前工作目录: {os.getcwd()}")
+            
+            # 等待一小段时间确保文件写入完成
+            time.sleep(1)
+            
+            # 扩展搜索路径
+            search_patterns = [
+                # 项目相关目录
                 Path("./downloads") / "*.csv",
+                Path("./downloads/Data") / "*.csv", 
+                Path("./downloads/Download") / "*.csv",
                 Path("./") / "*.csv",
-                Path("./output") / "*.csv"
+                Path("./output") / "*.csv",
+                Path("./Data") / "*.csv",
+                Path("./Download") / "*.csv",
+                # 可能的子目录
+                Path("./downloads") / "*" / "*.csv",
+                Path("./") / "*" / "*.csv",
             ]
             
             csv_file = None
-            for pattern in csv_paths:
-                import glob
-                files = glob.glob(str(pattern))
-                if files:
-                    # 选择最新的文件
-                    csv_file = max(files, key=os.path.getctime)
-                    break
+            all_found_files = []
             
-            if csv_file and os.path.exists(csv_file):
-                print(f"\n找到CSV文件: {csv_file}")
-                csv_content = read_csv_first_rows(csv_file)
-                send_markdown_message(csv_content)
+            for pattern in search_patterns:
+                try:
+                    files = glob.glob(str(pattern), recursive=False)
+                    if pattern.name.count('*') > 1:  # 如果是递归模式
+                        files = glob.glob(str(pattern), recursive=True)
+                    
+                    if files:
+                        print(f"  ✅ 在 {pattern} 找到 {len(files)} 个文件: {files}")
+                        all_found_files.extend(files)
+                    else:
+                        print(f"  ❌ 在 {pattern} 未找到文件")
+                except Exception as e:
+                    print(f"  ⚠️ 搜索 {pattern} 时出错: {e}")
+            
+            # 如果找到文件，选择最新的
+            if all_found_files:
+                # 去重并按修改时间排序
+                unique_files = list(set(all_found_files))
+                csv_file = max(unique_files, key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0)
+                print(f"  🎯 选择最新文件: {csv_file}")
+                print(f"  📅 文件修改时间: {time.ctime(os.path.getmtime(csv_file))}")
             else:
-                print("\n未找到生成的CSV文件")
+                print("  ❌ 在所有预定义路径中都未找到CSV文件")
+                
+                # 进行全局递归搜索
+                print("\n🔍 执行全局递归搜索...")
+                try:
+                    all_csv = glob.glob("**/*.csv", recursive=True)
+                    if all_csv:
+                        print(f"   找到的所有CSV文件：")
+                        for f in all_csv:
+                            stat = os.stat(f)
+                            print(f"   - {f} (大小: {stat.st_size} bytes, 修改时间: {time.ctime(stat.st_mtime)})")
+                        
+                        # 选择最新的CSV文件
+                        csv_file = max(all_csv, key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0)
+                        print(f"   🎯 选择最新的全局文件: {csv_file}")
+                    else:
+                        print("   未找到任何CSV文件")
+                except Exception as e:
+                    print(f"   全局搜索出错: {e}")
+            
+            # 尝试读取文件
+            if csv_file and os.path.exists(csv_file):
+                print(f"\n📄 找到CSV文件: {csv_file}")
+                print(f"📊 文件信息:")
+                stat = os.stat(csv_file)
+                print(f"   - 文件大小: {stat.st_size} bytes")
+                print(f"   - 修改时间: {time.ctime(stat.st_mtime)}")
+                print(f"   - 绝对路径: {os.path.abspath(csv_file)}")
+                
+                try:
+                    csv_content = read_csv_first_rows(csv_file)
+                    send_markdown_message(csv_content)
+                    print("✅ CSV内容读取和发送成功")
+                except Exception as e:
+                    print(f"❌ 读取CSV文件失败: {e}")
+            else:
+                print("\n❌ 最终未找到可用的CSV文件")
+                print("🔍 调试信息:")
+                print(f"   - 当前目录: {os.getcwd()}")
+                print(f"   - downloads目录存在: {os.path.exists('downloads')}")
+                if os.path.exists('downloads'):
+                    print(f"   - downloads目录内容: {os.listdir('downloads')}")
+                print(f"   - 当前目录内容: {[f for f in os.listdir('.') if f.endswith('.csv')]}")
         
         # 如果有错误，设置退出码
         if not result.get('success', False):
