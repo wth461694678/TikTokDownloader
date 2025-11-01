@@ -752,201 +752,151 @@ async def _handle_collection_action(tiktok_downloader, action, urls, result):
         result['message'] = f'处理{action}时出现错误: {str(e)}'
 
 
-def create_argument_parser():
-    """创建命令行参数解析器"""
-    parser = argparse.ArgumentParser(
-        description='TikTok/抖音下载工具 API 接口',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-使用示例:
-  # 下载作品
-  python api_download.py --cookie "your_cookie" --action detail --urls "https://www.douyin.com/video/xxx"
-  
-  # 下载账号作品
-  python api_download.py --cookie "your_cookie" --action account --urls "https://www.douyin.com/user/xxx" --account-tab post --max-pages 5
-  
-  # 采集评论
-  python api_download.py --cookie "your_cookie" --action comment --urls "https://www.douyin.com/video/xxx" --storage-format csv --max-pages 3
-  
-  # 搜索内容
-  python api_download.py --cookie "your_cookie" --action search --search-keyword "美食" --search-type video --storage-format xlsx
-  
-  # 获取直播信息
-  python api_download.py --cookie "your_cookie" --action live --urls "https://live.douyin.com/xxx"
-  
-  # 从文件读取配置
-  python api_download.py --config config.json
-        '''
-    )
-    
-    # 基本参数
-    parser.add_argument('--config', type=str, help='从JSON文件读取配置参数')
-    parser.add_argument('--cookie', type=str, help='Cookie字符串（必需，除非使用--config）')
-    parser.add_argument('--action', type=str, choices=SUPPORTED_ACTIONS, 
-                       help=f'操作类型 {SUPPORTED_ACTIONS}')
-    
-    # URL相关参数
-    parser.add_argument('--urls', type=str, help='目标URL或URL列表（JSON格式字符串）')
-    parser.add_argument('--urls-file', type=str, help='包含URL列表的文件路径')
-    
-    # 平台参数
-    parser.add_argument('--tiktok', action='store_true', help='使用TikTok平台（默认为抖音）')
-    
-    # 下载相关参数
-    parser.add_argument('--download', action='store_true', help='是否下载文件')
-    parser.add_argument('--download-path', type=str, default='./downloads', help='下载路径')
-    parser.add_argument('--dynamic-cover', action='store_true', help='下载动态封面')
-    parser.add_argument('--static-cover', action='store_true', help='下载静态封面')
-    
-    # 存储格式参数
-    parser.add_argument('--storage-format', type=str, choices=SUPPORTED_FORMATS,
-                       help=f'存储格式 {SUPPORTED_FORMATS}')
-    
-    # 账号相关参数
-    parser.add_argument('--account-tab', type=str, choices=ACCOUNT_TABS,
-                       help=f'账号标签 {ACCOUNT_TABS}')
-    
-    # 搜索相关参数
-    parser.add_argument('--search-keyword', type=str, help='搜索关键词')
-    parser.add_argument('--search-type', type=str, choices=SEARCH_TYPES,
-                       help=f'搜索类型 {SEARCH_TYPES}')
-    
-    # 分页参数
-    parser.add_argument('--max-pages', type=int, help='最大页数限制')
-    
-    # 其他参数
-    parser.add_argument('--proxy', type=str, help='代理设置')
-    parser.add_argument('--debug', action='store_true', help='启用调试模式')
-    parser.add_argument('--sync', action='store_true', help='使用同步模式')
-    
-    return parser
+def send_markdown_message(content: str):
+    """发送Markdown消息到bot（示例实现）"""
+    # TODO: 实现实际的bot发送逻辑
+    print("发送给Bot的消息:")
+    print("=" * 50)
+    print(content)
+    print("=" * 50)
 
 
-def load_config_from_file(config_file: str) -> dict:
-    """从JSON文件加载配置"""
+def read_csv_first_rows(csv_path: str, rows: int = 5) -> str:
+    """读取CSV文件的前几行并格式化为Markdown表格"""
     try:
-        with open(config_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        import csv
+        with open(csv_path, 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            data = []
+            for i, row in enumerate(reader):
+                if i >= rows:
+                    break
+                data.append(row)
+        
+        if not data:
+            return "CSV文件为空"
+        
+        # 格式化为Markdown表格
+        if len(data) == 1:
+            return f"CSV只有标题行: {', '.join(data[0])}"
+        
+        markdown = "CSV文件前5行:\n\n"
+        
+        # 表头
+        if data:
+            markdown += "| " + " | ".join(data[0]) + " |\n"
+            markdown += "|" + "---|" * len(data[0]) + "\n"
+        
+        # 数据行
+        for row in data[1:]:
+            # 确保行的列数与表头一致
+            while len(row) < len(data[0]):
+                row.append("")
+            markdown += "| " + " | ".join(row[:len(data[0])]) + " |\n"
+        
+        return markdown
+        
     except Exception as e:
-        print(f"读取配置文件失败: {e}")
-        sys.exit(1)
+        return f"读取CSV文件失败: {e}"
 
 
-def parse_urls(urls_str: str) -> Union[str, List[str]]:
-    """解析URL字符串"""
-    urls_str = urls_str.strip()
-    
-    # 如果以 [ 开头，尝试解析为JSON列表
-    if urls_str.startswith('['):
-        try:
-            return json.loads(urls_str)
-        except json.JSONDecodeError:
-            print("URL列表JSON格式错误")
-            sys.exit(1)
-    
-    # 否则作为单个URL处理
-    return urls_str
-
-
-def load_urls_from_file(file_path: str) -> List[str]:
-    """从文件加载URL列表"""
+def parse_kwargs(kwargs_str: str) -> dict:
+    """解析JSON格式的kwargs参数"""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            urls = []
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    urls.append(line)
-            return urls
-    except Exception as e:
-        print(f"读取URL文件失败: {e}")
+        if not kwargs_str or kwargs_str.strip() == '{}':
+            return {}
+        return json.loads(kwargs_str)
+    except json.JSONDecodeError as e:
+        print(f"❌ kwargs JSON 格式错误: {e}")
         sys.exit(1)
 
 
 async def main():
-    """主函数"""
-    parser = create_argument_parser()
-    args = parser.parse_args()
+    """主函数 - 处理命令行参数"""
+    if len(sys.argv) < 3:
+        print("用法: python api_download.py <cookie> <action> [kwargs_json]")
+        print("示例: python api_download.py 'your_cookie' 'comment' '{\"urls\": \"https://...\", \"storage_format\": \"csv\"}'")
+        sys.exit(1)
     
-    # 如果指定了配置文件，从文件加载参数
-    if args.config:
-        config = load_config_from_file(args.config)
-        # 将配置文件中的参数设置为默认值
-        for key, value in config.items():
-            if not hasattr(args, key) or getattr(args, key) is None:
-                setattr(args, key.replace('-', '_'), value)
+    cookie = sys.argv[1]
+    action = sys.argv[2]
+    kwargs_str = sys.argv[3] if len(sys.argv) > 3 else '{}'
     
     # 验证必需参数
-    if not args.cookie:
-        print("错误: 必须提供 --cookie 参数或在配置文件中指定")
+    if not cookie:
+        print("❌ 错误: Cookie参数不能为空")
         sys.exit(1)
     
-    if not args.action:
-        print("错误: 必须提供 --action 参数")
+    if not action:
+        print("❌ 错误: Action参数不能为空")
         sys.exit(1)
     
-    # 处理URL参数
-    urls = None
-    if args.urls:
-        urls = parse_urls(args.urls)
-    elif args.urls_file:
-        urls = load_urls_from_file(args.urls_file)
-    elif args.action in ['detail', 'account', 'comment', 'live', 'mix', 'hashtag', 'slides', 'user']:
-        print(f"错误: {args.action} 操作需要提供 --urls 或 --urls-file 参数")
-        sys.exit(1)
+    # 解析kwargs参数
+    kwargs = parse_kwargs(kwargs_str)
     
     # 构建API调用参数
     api_params = {
-        'cookie': args.cookie,
-        'action': args.action,
-        'tiktok': args.tiktok,
+        'cookie': cookie,
+        'action': action,
+        'tiktok': kwargs.get('tiktok', False),
     }
     
     # 添加可选参数
-    if urls:
-        api_params['urls'] = urls
-    if args.download:
-        api_params['download'] = True
-    if args.download_path:
-        api_params['download_path'] = args.download_path
-    if args.dynamic_cover:
-        api_params['dynamic_cover'] = True
-    if args.static_cover:
-        api_params['static_cover'] = True
-    if args.storage_format:
-        api_params['storage_format'] = args.storage_format
-    if args.account_tab:
-        api_params['account_tab'] = args.account_tab
-    if args.search_keyword:
-        api_params['search_keyword'] = args.search_keyword
-    if args.search_type:
-        api_params['search_type'] = args.search_type
-    if args.max_pages:
-        api_params['max_pages'] = args.max_pages
-    if args.proxy:
-        api_params['proxy'] = args.proxy
+    for key, value in kwargs.items():
+        if key not in ['cookie', 'action']:
+            api_params[key] = value
     
     try:
+        print(f"开始执行 {action} 操作...")
+        print(f"参数: {json.dumps({k: v for k, v in api_params.items() if k != 'cookie'}, ensure_ascii=False)}")
+        
         # 执行API调用
-        if args.sync:
-            # 同步模式
-            result = download_sync(**api_params)
-        else:
-            # 异步模式
-            result = await API_download(**api_params)
+        result = await API_download(**api_params)
         
         # 输出结果
+        print("\n执行结果:")
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        
+        # 如果是CSV格式且操作成功，读取CSV文件前5行并发送给bot
+        if (result.get('success', False) and 
+            kwargs.get('storage_format') == 'csv' and 
+            action in ['comment', 'search', 'account', 'detail']):
+            
+            # 查找生成的CSV文件
+            import os
+            from pathlib import Path
+            
+            # 常见的CSV文件位置
+            csv_paths = [
+                Path("./downloads") / "*.csv",
+                Path("./") / "*.csv",
+                Path("./output") / "*.csv"
+            ]
+            
+            csv_file = None
+            for pattern in csv_paths:
+                import glob
+                files = glob.glob(str(pattern))
+                if files:
+                    # 选择最新的文件
+                    csv_file = max(files, key=os.path.getctime)
+                    break
+            
+            if csv_file and os.path.exists(csv_file):
+                print(f"\n找到CSV文件: {csv_file}")
+                csv_content = read_csv_first_rows(csv_file)
+                send_markdown_message(csv_content)
+            else:
+                print("\n未找到生成的CSV文件")
         
         # 如果有错误，设置退出码
         if not result.get('success', False):
             sys.exit(1)
             
     except Exception as e:
-        print(f"执行失败: {e}")
-        if args.debug:
-            import traceback
-            traceback.print_exc()
+        print(f"❌ 执行失败: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
