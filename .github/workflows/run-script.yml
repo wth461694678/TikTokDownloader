@@ -1,0 +1,48 @@
+name: Run Python Script
+
+on:
+  # 允许通过API调用（workflow_dispatch）
+  workflow_dispatch:
+    inputs:
+      param1:
+        description: 'First required string parameter'
+        required: true
+        type: string
+      param2:
+        description: 'Second required string parameter'
+        required: true
+        type: string
+      param3:
+        description: 'Optional third string parameter'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  run-script:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.12.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12.12'
+        architecture: 'x64'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      shell: bash
+      
+    - name: Run Python script
+      run: |
+        if [ -n "${{ github.event.inputs.param3 }}" ]; then
+          python maincopy.py "${{ github.event.inputs.param1 }}" "${{ github.event.inputs.param2 }}" --param3 "${{ github.event.inputs.param3 }}"
+        else
+          python maincopy.py "${{ github.event.inputs.param1 }}" "${{ github.event.inputs.param2 }}"
+        fi
+      shell: bash

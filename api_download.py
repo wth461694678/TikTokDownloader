@@ -5,6 +5,9 @@
 """
 
 import asyncio
+import argparse
+import json
+import sys
 from pathlib import Path
 from typing import Optional, Union, List
 
@@ -15,6 +18,21 @@ from src.manager import Database, DownloadRecorder
 from src.module import Cookie
 from src.record import BaseLogger, LoggerManager
 from src.custom import PROJECT_ROOT
+
+# 定义支持的操作类型
+SUPPORTED_ACTIONS = [
+    'detail', 'account', 'comment', 'search', 'info', 
+    'live', 'mix', 'hashtag', 'slides', 'user', 'hot'
+]
+
+# 定义支持的文件格式
+SUPPORTED_FORMATS = ['csv', 'xlsx', 'sql', 'text']
+
+# 定义支持的账号标签
+ACCOUNT_TABS = ['post', 'favorite', 'collection']
+
+# 定义支持的搜索类型
+SEARCH_TYPES = ['general', 'user', 'video', 'live']
 
 
 class DummyConsole:
@@ -734,80 +752,203 @@ async def _handle_collection_action(tiktok_downloader, action, urls, result):
         result['message'] = f'处理{action}时出现错误: {str(e)}'
 
 
-# 使用示例
+def create_argument_parser():
+    """创建命令行参数解析器"""
+    parser = argparse.ArgumentParser(
+        description='TikTok/抖音下载工具 API 接口',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+使用示例:
+  # 下载作品
+  python api_download.py --cookie "your_cookie" --action detail --urls "https://www.douyin.com/video/xxx"
+  
+  # 下载账号作品
+  python api_download.py --cookie "your_cookie" --action account --urls "https://www.douyin.com/user/xxx" --account-tab post --max-pages 5
+  
+  # 采集评论
+  python api_download.py --cookie "your_cookie" --action comment --urls "https://www.douyin.com/video/xxx" --storage-format csv --max-pages 3
+  
+  # 搜索内容
+  python api_download.py --cookie "your_cookie" --action search --search-keyword "美食" --search-type video --storage-format xlsx
+  
+  # 获取直播信息
+  python api_download.py --cookie "your_cookie" --action live --urls "https://live.douyin.com/xxx"
+  
+  # 从文件读取配置
+  python api_download.py --config config.json
+        '''
+    )
+    
+    # 基本参数
+    parser.add_argument('--config', type=str, help='从JSON文件读取配置参数')
+    parser.add_argument('--cookie', type=str, help='Cookie字符串（必需，除非使用--config）')
+    parser.add_argument('--action', type=str, choices=SUPPORTED_ACTIONS, 
+                       help=f'操作类型 {SUPPORTED_ACTIONS}')
+    
+    # URL相关参数
+    parser.add_argument('--urls', type=str, help='目标URL或URL列表（JSON格式字符串）')
+    parser.add_argument('--urls-file', type=str, help='包含URL列表的文件路径')
+    
+    # 平台参数
+    parser.add_argument('--tiktok', action='store_true', help='使用TikTok平台（默认为抖音）')
+    
+    # 下载相关参数
+    parser.add_argument('--download', action='store_true', help='是否下载文件')
+    parser.add_argument('--download-path', type=str, default='./downloads', help='下载路径')
+    parser.add_argument('--dynamic-cover', action='store_true', help='下载动态封面')
+    parser.add_argument('--static-cover', action='store_true', help='下载静态封面')
+    
+    # 存储格式参数
+    parser.add_argument('--storage-format', type=str, choices=SUPPORTED_FORMATS,
+                       help=f'存储格式 {SUPPORTED_FORMATS}')
+    
+    # 账号相关参数
+    parser.add_argument('--account-tab', type=str, choices=ACCOUNT_TABS,
+                       help=f'账号标签 {ACCOUNT_TABS}')
+    
+    # 搜索相关参数
+    parser.add_argument('--search-keyword', type=str, help='搜索关键词')
+    parser.add_argument('--search-type', type=str, choices=SEARCH_TYPES,
+                       help=f'搜索类型 {SEARCH_TYPES}')
+    
+    # 分页参数
+    parser.add_argument('--max-pages', type=int, help='最大页数限制')
+    
+    # 其他参数
+    parser.add_argument('--proxy', type=str, help='代理设置')
+    parser.add_argument('--debug', action='store_true', help='启用调试模式')
+    parser.add_argument('--sync', action='store_true', help='使用同步模式')
+    
+    return parser
+
+
+def load_config_from_file(config_file: str) -> dict:
+    """从JSON文件加载配置"""
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"读取配置文件失败: {e}")
+        sys.exit(1)
+
+
+def parse_urls(urls_str: str) -> Union[str, List[str]]:
+    """解析URL字符串"""
+    urls_str = urls_str.strip()
+    
+    # 如果以 [ 开头，尝试解析为JSON列表
+    if urls_str.startswith('['):
+        try:
+            return json.loads(urls_str)
+        except json.JSONDecodeError:
+            print("URL列表JSON格式错误")
+            sys.exit(1)
+    
+    # 否则作为单个URL处理
+    return urls_str
+
+
+def load_urls_from_file(file_path: str) -> List[str]:
+    """从文件加载URL列表"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            urls = []
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    urls.append(line)
+            return urls
+    except Exception as e:
+        print(f"读取URL文件失败: {e}")
+        sys.exit(1)
+
+
+async def main():
+    """主函数"""
+    parser = create_argument_parser()
+    args = parser.parse_args()
+    
+    # 如果指定了配置文件，从文件加载参数
+    if args.config:
+        config = load_config_from_file(args.config)
+        # 将配置文件中的参数设置为默认值
+        for key, value in config.items():
+            if not hasattr(args, key) or getattr(args, key) is None:
+                setattr(args, key.replace('-', '_'), value)
+    
+    # 验证必需参数
+    if not args.cookie:
+        print("错误: 必须提供 --cookie 参数或在配置文件中指定")
+        sys.exit(1)
+    
+    if not args.action:
+        print("错误: 必须提供 --action 参数")
+        sys.exit(1)
+    
+    # 处理URL参数
+    urls = None
+    if args.urls:
+        urls = parse_urls(args.urls)
+    elif args.urls_file:
+        urls = load_urls_from_file(args.urls_file)
+    elif args.action in ['detail', 'account', 'comment', 'live', 'mix', 'hashtag', 'slides', 'user']:
+        print(f"错误: {args.action} 操作需要提供 --urls 或 --urls-file 参数")
+        sys.exit(1)
+    
+    # 构建API调用参数
+    api_params = {
+        'cookie': args.cookie,
+        'action': args.action,
+        'tiktok': args.tiktok,
+    }
+    
+    # 添加可选参数
+    if urls:
+        api_params['urls'] = urls
+    if args.download:
+        api_params['download'] = True
+    if args.download_path:
+        api_params['download_path'] = args.download_path
+    if args.dynamic_cover:
+        api_params['dynamic_cover'] = True
+    if args.static_cover:
+        api_params['static_cover'] = True
+    if args.storage_format:
+        api_params['storage_format'] = args.storage_format
+    if args.account_tab:
+        api_params['account_tab'] = args.account_tab
+    if args.search_keyword:
+        api_params['search_keyword'] = args.search_keyword
+    if args.search_type:
+        api_params['search_type'] = args.search_type
+    if args.max_pages:
+        api_params['max_pages'] = args.max_pages
+    if args.proxy:
+        api_params['proxy'] = args.proxy
+    
+    try:
+        # 执行API调用
+        if args.sync:
+            # 同步模式
+            result = download_sync(**api_params)
+        else:
+            # 异步模式
+            result = await API_download(**api_params)
+        
+        # 输出结果
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        
+        # 如果有错误，设置退出码
+        if not result.get('success', False):
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"执行失败: {e}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    # 注意：此API模块已移除对ColorfulConsole的依赖，使用内置的DummyConsole替代
-    # 示例用法
-    example_cookie = "__live_version__=%221.1.3.9068%22; live_use_vvc=%22false%22; hevc_supported=true; enter_pc_once=1; UIFID_TEMP=e92777d2cb4cf0f94a981760c14554e8d3208daf0443679909dcdbe8e735b061ff1698d40c931ec6ea9ab67d8eda71feaf3c95d6228a0bc6c3e5c6aab9c9c74ef48414d129633bf4fdbb4851da84b1ee; dy_swidth=2560; fpk1=U2FsdGVkX18zJWQ9Zk4mRVczE20OmA2mmUSV+rsbla5PfwS7i4LwwCzLWnKlCQXtwYXfhuQCnlN6VwhPEk1LUg==; fpk2=2204ee63bef2f351470a66ffe1bb020e; s_v_web_id=verify_mh04nbep_XOIyjHEr_pqcl_4bkP_BdX9_o9uA0GRIzPtu; bd_ticket_guard_client_web_domain=2; passport_csrf_token=f7cc7213c59b372b6063833e65d4331a; passport_csrf_token_default=f7cc7213c59b372b6063833e65d4331a; UIFID=e92777d2cb4cf0f94a981760c14554e8d3208daf0443679909dcdbe8e735b0619e703945ac231b3db9a20216dd16e252dd2a1cdc61cfc39b8cce5eadf2c1861786cc35df2ae5455006a124e05e5f9a5e1e3b3b37422209a0147f71be46494ae838d0276ac254f7f7e1c7faee0193d994f9f06611d124dd052ac7ff4e352743f55cad001aaa5a95da5f98ef8f9b0bf4918be8f64101b0f01e2b1ecc19ae30f689; passport_mfa_token=Cjf7h8vcic1%2F8lPqFKEqH1ghg9AiE2dRh%2B%2B5zpEXqzfX5%2BgXxMJdSBlp1CgCnlETCla5Sw0qc06LGkoKPAAAAAAAAAAAAABPpGf8OmwjoLpz66P7hkx3%2FzYvwIwxPtJA%2Fdg7mVVnA7%2F3G9ohcJHAIc0U75O2Z6uJ%2FhDt%2F%2F8NGPax0WwgAiIBA%2FvhUM4%3D; d_ticket=d4c65af5a60342dbc91ceb00bc0d9451306f4; n_mh=p3i7kKksPF4ZDsLMIQdQbhidWGM6jgZ1qxLE48ZhqBw; is_staff_user=false; __security_server_data_status=1; login_time=1761624235757; is_dash_user=1; publish_badge_show_info=%220%2C0%2C0%2C1761624236208%22; DiscoverFeedExposedAd=%7B%7D; SelfTabRedDotControl=%5B%5D; download_guide=%223%2F20251028%2F0%22; my_rd=2; passport_assist_user=CkEu3UaUn_0g-lICdqWDKoIef2KDjFZ70_3pTCMJreiLccbBSujW2ymR-YEtc2PZibPmZLxzyA4cYRBCVs_5GxJ99BpKCjwAAAAAAAAAAAAAT6VwT10A1Ppivsh1XeNlhbqGa0KU56OguKwLdNEbv2vO7yh5u9zdwTHlsPdsptVcLcgQwYCADhiJr9ZUIAEiAQOIOPap; sid_guard=bc285b30c79eab095dddd56143298f56%7C1761632741%7C5183999%7CSat%2C+27-Dec-2025+06%3A25%3A40+GMT; uid_tt=7fa898db008697ca63f3cec003eec98b; uid_tt_ss=7fa898db008697ca63f3cec003eec98b; sid_tt=bc285b30c79eab095dddd56143298f56; sessionid=bc285b30c79eab095dddd56143298f56; sessionid_ss=bc285b30c79eab095dddd56143298f56; session_tlb_tag=sttt%7C17%7CvChbMMeeqwld3dVhQymPVv_________Tf170X8whSzmA6OSOLX2Pc4EljArhCOkvqGu5t9G_p6s%3D; sid_ucp_v1=1.0.0-KGEzNTBiYzQ0ZmIwNjExNjY1ZGFmZGQ1NDMxOWI2ODFkNGNiZjkzYTUKIQiguZDUkfTJBBDlw4HIBhjvMSAMMMLkxvAFOAdA9AdIBBoCbHEiIGJjMjg1YjMwYzc5ZWFiMDk1ZGRkZDU2MTQzMjk4ZjU2; ssid_ucp_v1=1.0.0-KGEzNTBiYzQ0ZmIwNjExNjY1ZGFmZGQ1NDMxOWI2ODFkNGNiZjkzYTUKIQiguZDUkfTJBBDlw4HIBhjvMSAMMMLkxvAFOAdA9AdIBBoCbHEiIGJjMjg1YjMwYzc5ZWFiMDk1ZGRkZDU2MTQzMjk4ZjU2; _bd_ticket_crypt_cookie=200da24e5c5f6f4b258d9a5875001e6a; __security_mc_1_s_sdk_sign_data_key_web_protect=57694f33-4ebe-b16e; __security_mc_1_s_sdk_cert_key=1df61f04-475b-84c4; __security_mc_1_s_sdk_crypt_sdk=05ddeee7-4680-8381; volume_info=%7B%22isUserMute%22%3Afalse%2C%22isMute%22%3Afalse%2C%22volume%22%3A0.5%7D; __ac_nonce=069033e7700b3cf28bb07; __ac_signature=_02B4Z6wo00f01NlpXGAAAIDCDeXk5JPgpVzZSVjAAF9fba; douyin.com; device_web_cpu_core=24; device_web_memory_size=8; architecture=amd64; dy_sheight=1441; stream_recommend_feed_params=%22%7B%5C%22cookie_enabled%5C%22%3Atrue%2C%5C%22screen_width%5C%22%3A2560%2C%5C%22screen_height%5C%22%3A1441%2C%5C%22browser_online%5C%22%3Atrue%2C%5C%22cpu_core_num%5C%22%3A24%2C%5C%22device_memory%5C%22%3A8%2C%5C%22downlink%5C%22%3A10%2C%5C%22effective_type%5C%22%3A%5C%224g%5C%22%2C%5C%22round_trip_time%5C%22%3A50%7D%22; FOLLOW_NUMBER_YELLOW_POINT_INFO=%22MS4wLjABAAAA86KIUDDvtnlO02DMYxsZQn6Nd6qgnXkpRofvthpk6Gi1WzJvoSbQMyGFWLHAiE9i%2F1761840000000%2F0%2F1761820282936%2F0%22; strategyABtestKey=%221761820283.498%22; ttwid=1%7CSmRR2-ogJH8OCazFO9BMNnb9VZmxxI65orMrb-ayGes%7C1761820283%7C506c835339456f802ff4f6e97df8d348bd6dcb56d5a85c32de089869781d55ec; FRIEND_NUMBER_RED_POINT_INFO=%22MS4wLjABAAAA86KIUDDvtnlO02DMYxsZQn6Nd6qgnXkpRofvthpk6Gi1WzJvoSbQMyGFWLHAiE9i%2F1761840000000%2F1761820285833%2F0%2F0%22; FOLLOW_LIVE_POINT_INFO=%22MS4wLjABAAAA86KIUDDvtnlO02DMYxsZQn6Nd6qgnXkpRofvthpk6Gi1WzJvoSbQMyGFWLHAiE9i%2F1761840000000%2F0%2F1761820286087%2F0%22; biz_trace_id=96292dd1; sdk_source_info=7e276470716a68645a606960273f2771777060272927676c715a6d6069756077273f2771777060272927666d776a68605a607d71606b766c6a6b5a7666776c7571273f275e58272927666a6b766a69605a696c6061273f27636469766027292762696a6764695a7364776c6467696076273f275e582729277672715a646971273f2763646976602729277f6b5a666475273f2763646976602729276d6a6e5a6b6a716c273f2763646976602729276c6b6f5a7f6367273f27636469766027292771273f273536333d3d3735373d34333234272927676c715a75776a716a666a69273f2763646976602778; bit_env=EUUqB4sEXS_E7fR4i8V0ekJjkfYedqiKa6RIYxw58QpmnCu_T4sVjcAHnJ2e5TUPP0Z0M4IeoDLYz9zy1TpjesiX1N3DbjPUeUiwNcLtVzL0U-Udm6KthsFA-sLP9808x_fAUXcch5txi3kcorHlK0O96xbO3ZzLipsFRSf2MQLXUU1gN7e2q0u22AjsQcsNcmD7qA_CZe4xOZGfT-MkJp3mqVT_tc7kfyF2PT1pa7WqaBqhKy7OrFBDUG3g7E1jk3HxVWzQZtSdmlB7jNprPMn-YBdSc-ntOp6wZGZZzPDs1zVwi-iHGecQTRHkaTxMXjZItGwhPdnpIGVPbdNuIqCLH6FLsqG-XNgJk97DnI9-NcuSZUZUXlrOuHrsTYI1c-My8IWe8NEzUBbM3GPWCyeQ_5UzzvQtWerMbqxOpR4rWhCYvFJMgEmpg3xDqwTC3wt2BZrrsVkZrv8mAHaNvrz4ojyS52ZMg_9WFPWuIfLTU7liYqiPLMdWx47XtWwo; gulu_source_res=eyJwX2luIjoiYmM5OWY5NGU3MmYzZDQ4ZDRiMWU2Mzc1MzQ3MzY4YTYwNzI5OTJmZWE2ZDJhMDFiZDE3ZWVmZjAzMTk3ZDk3NyJ9; passport_auth_mix_state=wyfti2cnxztbyeuzcq95rhdm1p5dg9hgbx5303hz0zml6cka; home_can_add_dy_2_desktop=%220%22; bd_ticket_guard_client_data=eyJiZC10aWNrZXQtZ3VhcmQtdmVyc2lvbiI6MiwiYmQtdGlja2V0LWd1YXJkLWl0ZXJhdGlvbi12ZXJzaW9uIjoxLCJiZC10aWNrZXQtZ3VhcmQtcmVlLXB1YmxpYy1rZXkiOiJCQXFxeUtTRVR6SlVFUDJuLzduSjg5OEZpV2FCSE5TM0tmQ29SbUtQRHhvZmhGMHNaNDI0R1JkaHpQcTlja2lYWU1UZzl0T2dCS2dNbXgreTBuTnR2dE09IiwiYmQtdGlja2V0LWd1YXJkLXdlYi12ZXJzaW9uIjoyfQ%3D%3D; bd_ticket_guard_client_data_v2=eyJyZWVfcHVibGljX2tleSI6IkJBcXF5S1NFVHpKVUVQMm4vN25KODk4RmlXYUJITlMzS2ZDb1JtS1BEeG9maEYwc1o0MjRHUmRoelBxOWNraVhZTVRnOXRPZ0JLZ01teCt5MG5OdHZ0TT0iLCJ0c19zaWduIjoidHMuMi43YTUwMDNkMmRjYzg2NTVhYjM3Nzc2MTJkMWJhYWZiMjJmMWVhYzMzZjFmMWQ2YWZjMmZiNjEwMTZkZTcxMDdkYzRmYmU4N2QyMzE5Y2YwNTMxODYyNGNlZGExNDkxMWNhNDA2ZGVkYmViZWRkYjJlMzBmY2U4ZDRmYTAyNTc1ZCIsInJlcV9jb250ZW50Ijoic2VjX3RzIiwicmVxX3NpZ24iOiJTR2VWRWYxUEJRWTNCTHhwWkxmL2ZJeHV4RFVJenNPZWRjRjlZdTM0dU5RPSIsInNlY190cyI6IiNaQTlvTitFN1RReS9RbW1odDlLQkRtc3REV1NYTGNOWGxqWDFKdW8zd2xVU3RUcnJzNTY5cjFhcnlQcGoifQ%3D%3D; IsDouyinActive=true; playRecommendGuideTagCount=8; totalRecommendGuideTagCount=8; odin_tt=ffee98449725d741dbab8f8a521776917f21233f2d379b2319d56f832807ee99f43ce018027efdcd4faac5731539e64964e2555438ed9d4c6dc47105decfb99aef2330bc911340b42cb970bb3102af95"
-    example_urls = [
-        "https://www.douyin.com/user/self?from_tab_name=main&modal_id=7253355171290352955&showTab=favorite_collection"
-    ]
-    
-    # 异步调用示例
-    async def main():
-        # # 下载作品
-        # result1 = await API_download(
-        #     cookie=example_cookie,
-        #     action="detail",
-        #     urls=example_urls,
-        #     tiktok=False,  # False表示抖音，True表示TikTok
-        #     download_path="./downloads",
-        #     download=True,
-        #     dynamic_cover=True,
-        #     static_cover=True
-        # )
-        # print("作品下载结果:", result1)
-        
-        # # 下载账号作品（限制最大页数）
-        # result2 = await API_download(
-        #     cookie=example_cookie,
-        #     action="account",
-        #     urls="https://www.douyin.com/user/username",
-        #     account_tab="post",  # post发布作品, favorite喜欢作品, collection收藏作品
-        #     max_pages=10,  # 限制最多请求10页数据
-        #     tiktok=False
-        # )
-        # print("账号作品下载结果:", result2)
-        
-        # 采集评论数据（限制最大页数）
-        result3 = await API_download(
-            cookie=example_cookie,
-            action="comment",
-            urls=example_urls,
-            storage_format="csv",  # 保存为CSV格式
-            max_pages=2,  # 限制最多请求5页评论数据
-            tiktok=False
-        )
-        print("评论采集结果:", result3)
-        
-        # # 搜索功能
-        # result4 = await API_download(
-        #     cookie=example_cookie,
-        #     action="search",
-        #     search_keyword="美食",
-        #     search_type="video",  # general, user, video, live
-        #     storage_format="xlsx",
-        #     tiktok=False
-        # )
-        # print("搜索结果:", result4)
-        
-        # # 获取直播推流地址
-        # result5 = await API_download(
-        #     cookie=example_cookie,
-        #     action="live",
-        #     urls="https://live.douyin.com/123456789",
-        #     tiktok=False
-        # )
-        # print("直播结果:", result5)
-    
-    # 同步调用示例
-    # result = download_sync(
-    #     cookie=example_cookie,
-    #     action="detail",
-    #     urls=example_urls[0],  # 也可以传单个字符串
-    #     tiktok=False
-    # )
-    # print(result)
-    
-    # 运行异步示例
     asyncio.run(main())
