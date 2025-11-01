@@ -28,3 +28,5 @@ rookiepy==0.5.6
     # via douk-downloader (pyproject.toml)
 uvicorn==0.35.0
     # via douk-downloader (pyproject.toml)
+requests>=2.31.0
+    # HTTP请求库，用于send_markdown_message函数
