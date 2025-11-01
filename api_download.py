@@ -8,6 +8,8 @@ import asyncio
 import argparse
 import json
 import sys
+import os
+import hashlib
 from pathlib import Path
 from typing import Optional, Union, List
 
@@ -20,6 +22,9 @@ from src.record import BaseLogger, LoggerManager
 from src.custom import PROJECT_ROOT
 
 import requests
+
+# 企业微信消息推送配置
+WEBHOOK_KEY = "c6b2ff61-ec4d-49bc-a41b-80fa935f7112"  # 需要配置实际的key
 
 # 定义支持的操作类型
 SUPPORTED_ACTIONS = [
@@ -756,6 +761,134 @@ async def _handle_collection_action(tiktok_downloader, action, urls, result):
         result['message'] = f'处理{action}时出现错误: {str(e)}'
 
 
+def upload_file_to_webhook(file_path: str, webhook_key: str) -> Optional[str]:
+    """
+    上传文件到企业微信消息推送接口
+    
+    Args:
+        file_path (str): 要上传的文件路径
+        webhook_key (str): webhook的key参数
+        
+    Returns:
+        str: 上传成功返回media_id，失败返回None
+    """
+    if not webhook_key:
+        print("❌ webhook_key 未配置，跳过文件上传")
+        return None
+        
+    if not os.path.exists(file_path):
+        print(f"❌ 文件不存在: {file_path}")
+        return None
+    
+    # 构建上传URL
+    upload_url = f"https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media?key={webhook_key}&type=file"
+    
+    try:
+        print(f"\n📤 开始上传文件到企业微信...")
+        print(f"   文件路径: {file_path}")
+        print(f"   文件大小: {os.path.getsize(file_path)} bytes")
+        
+        # 准备文件数据
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
+        
+        # 获取文件名
+        filename = os.path.basename(file_path)
+        
+        # 构建multipart/form-data请求
+        files = {
+            'media': (filename, file_data, 'application/octet-stream')
+        }
+        
+        print(f"   上传URL: {upload_url}")
+        print(f"   文件名: {filename}")
+        
+        # 发送请求
+        response = requests.post(upload_url, files=files, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        print(f"   服务器响应: {result}")
+        
+        if result.get('errcode') == 0:
+            media_id = result.get('media_id')
+            print(f"✅ 文件上传成功! media_id: {media_id}")
+            return media_id
+        else:
+            error_msg = result.get('errmsg', '未知错误')
+            print(f"❌ 文件上传失败: {error_msg}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ 文件上传异常: {e}")
+        return None
+
+
+def send_file_message(media_id: str, webhook_key: str, chatid: str = "@all_group") -> bool:
+    """
+    发送文件消息到企业微信群
+    
+    Args:
+        media_id (str): 文件的media_id
+        webhook_key (str): webhook的key参数
+        chatid (str): 会话id，默认为"@all_group"表示所有群
+        
+    Returns:
+        bool: 发送成功返回True，失败返回False
+    """
+    if not webhook_key:
+        print("❌ webhook_key 未配置，跳过消息发送")
+        return False
+        
+    if not media_id:
+        print("❌ media_id 为空，无法发送文件消息")
+        return False
+    
+    # 构建消息发送URL
+    send_url = f"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={webhook_key}"
+    
+    # 构建消息体
+    message_data = {
+        "chatid": chatid,
+        "msgtype": "file",
+        "file": {
+            "media_id": media_id
+        }
+    }
+    
+    try:
+        print(f"\n📨 发送文件消息到企业微信群...")
+        print(f"   消息URL: {send_url}")
+        print(f"   会话ID: {chatid}")
+        print(f"   媒体ID: {media_id}")
+        print(f"   消息体: {json.dumps(message_data, ensure_ascii=False)}")
+        
+        # 发送请求
+        headers = {'Content-Type': 'application/json'}
+        response = requests.post(
+            send_url, 
+            json=message_data, 
+            headers=headers, 
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        print(f"   服务器响应: {result}")
+        
+        if result.get('errcode') == 0:
+            print("✅ 文件消息发送成功!")
+            return True
+        else:
+            error_msg = result.get('errmsg', '未知错误')
+            print(f"❌ 文件消息发送失败: {error_msg}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ 消息发送异常: {e}")
+        return False
+
+
 def send_markdown_message(content):
     key = "c6b2ff61-ec4d-49bc-a41b-80fa935f7112"
     headers = {'Content-Type': 'application/json'}
@@ -920,9 +1053,42 @@ async def main():
                     print(f"📝 CSV内容预览: {csv_content[:200]}..." if len(csv_content) > 200 else f"📝 CSV内容: {csv_content}")
                     
                     print("\n🤖 调用send_markdown_message函数...")
-
+                    print(f"🔧 函数: send_markdown_message")
+                    print(f"📋 参数类型: {type(csv_content)}")
+                    print(f"📋 参数长度: {len(csv_content)}")
+                    print(f"📋 参数内容: {repr(csv_content[:500])}..." if len(csv_content) > 500 else f"📋 参数内容: {repr(csv_content)}")
+                    
+                    # 获取webhook key (从环境变量或配置中获取)
+                    webhook_key = os.environ.get('WEBHOOK_KEY') or kwargs.get('webhook_key') or "c6b2ff61-ec4d-49bc-a41b-80fa935f7112"
+                    
+                    print(f"\n🔑 使用webhook key: {webhook_key[:8]}...")
+                    
+                    # 1. 上传CSV文件
+                    print("\n📤 步骤1: 上传CSV文件...")
+                    media_id = upload_file_to_webhook(csv_file, webhook_key)
+                    
+                    if media_id:
+                        # 2. 发送文件消息到群
+                        print("\n📨 步骤2: 发送文件消息到群...")
+                        file_sent = send_file_message(media_id, webhook_key)
+                        
+                        if file_sent:
+                            print("\n🎉 完整流程执行成功:")
+                            print("   ✅ CSV文件上传成功")
+                            print("   ✅ 文件消息发送成功")
+                        else:
+                            print("\n⚠️ 文件上传成功但消息发送失败")
+                    else:
+                        print("\n⚠️ 文件上传失败")
+                    
+                    # 3. 发送Markdown内容预览 (无论文件上传是否成功都发送)
+                    print("\n📋 步骤3: 发送CSV内容预览...")
                     response = send_markdown_message(csv_content)
-                    print("✅ send_markdown_message 函数调用完成,响应:", response.text)
+                    print("✅ send_markdown_message 函数调用完成")
+                    if hasattr(response, 'text'):
+                        print(f"📝 响应内容: {response.text}")
+                    
+                    print("✅ 所有步骤执行完成")
                     
                 except Exception as e:
                     print(f"❌ 读取或发送CSV文件失败: {e}")
