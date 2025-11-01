@@ -128,7 +128,9 @@ async def API_download(cookie: str, action: str, **kwargs) -> dict:
     # 获取参数
     urls = kwargs.get('urls', '')
     tiktok_platform = kwargs.get('tiktok', False)
-    download_path = kwargs.get('download_path', str(PROJECT_ROOT))
+    # 设置默认下载路径为downloads目录
+    downloads_dir = str(Path(PROJECT_ROOT) / "downloads")
+    download_path = kwargs.get('download_path', downloads_dir)
     cookie_tiktok = kwargs.get('cookie_tiktok', '')
     proxy = kwargs.get('proxy', None)
     proxy_tiktok = kwargs.get('proxy_tiktok', None)
@@ -866,7 +868,7 @@ async def main():
             import os
             from pathlib import Path
             
-            # 常见的CSV文件位置
+            # 优先在downloads目录查找CSV文件
             csv_paths = [
                 Path("./downloads") / "*.csv",
                 Path("./") / "*.csv",
